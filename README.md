@@ -4,6 +4,7 @@
 
 ### 目前提供功能
 * 任務拆分 IGroupTaskService
-* 
-* ### CHANGELOG
+
+
+### CHANGELOG
 - 0.0.1  加入任務拆分
