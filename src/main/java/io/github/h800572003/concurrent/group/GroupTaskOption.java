@@ -7,6 +7,10 @@ import org.apache.commons.lang3.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 分組參數
+ * @param <T>
+ */
 @Data
 public class GroupTaskOption<T> {
     private final String name;

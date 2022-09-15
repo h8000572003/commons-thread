@@ -13,12 +13,12 @@ import java.util.stream.Collectors;
  */
 public class SegmentGroup<T> implements IGroup<T> {
 
-    private final List<T> src;
-    private int sqSize;
+    private final List<T> src;//原始檔案
+    private int size;//檔案大小
     private int index = 0;
-    private final Map<Integer, IGroupTaskContext<T>> map = new HashMap<>();
+    private final Map<Integer, IGroupTaskContext<T>> map = new HashMap<>();//分群檔案
 
-    private final IClassificationStrategy<T> strategy;
+    private final IClassificationStrategy<T> strategy;//分群策略
 
 
     /**
@@ -46,15 +46,13 @@ public class SegmentGroup<T> implements IGroup<T> {
         for (Map.Entry<Integer, List<T>> integerListEntry : groupMap.entrySet()) {
             this.map.put(integerListEntry.getKey(), new GroupTaskContext<>(integerListEntry.getValue()));
         }
-
-
-        this.sqSize = map.keySet().size();
+        this.size = map.keySet().size();
     }
 
 
     @Override
     public boolean hasNext() {
-        return index <= sqSize - 1;
+        return index <= size - 1;
     }
 
     @Override
@@ -68,6 +66,6 @@ public class SegmentGroup<T> implements IGroup<T> {
 
     @Override
     public int getSize() {
-        return sqSize;
+        return size;
     }
 }

@@ -16,13 +16,18 @@ import java.util.stream.IntStream;
 
 @Slf4j
 class GroupTaskServiceTest {
-
-
-
+    IGroupTaskService.IGroupTask<Integer> run;
 
     @BeforeEach
     void init() {
+        run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
 
+            @Override
+            public void run(List<Integer> tasks) {
+                log.info("start size:{} :{}", tasks.size(), tasks);
+                log.info("end");
+            }
+        });
 
     }
 
@@ -33,27 +38,50 @@ class GroupTaskServiceTest {
      */
     @Test
     void execute() {
-        exe(3, 2, 10,0);
+        exe(3, 2, 10);
+
+        Mockito.verify(run, Mockito.times(3)).run(Mockito.anyList());
+
+
     }
+
     @Test
     void execute100() {
-        exe(3, 2, 1000,0);
+        exe(3, 2, 1000);
+        Mockito.verify(run, Mockito.times(3)).run(Mockito.anyList());
+
     }
 
     @Test
     @Timeout(3)
     void executeInterrupt() throws InterruptedException {
 
-        Thread thread = new Thread(() -> exe(10, 2, 300,300));
+       this.run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
+
+            @Override
+            public void run(List<Integer> tasks) {
+                log.info(Thread.currentThread().getName()+" start size:{} :{}", tasks.size(), tasks);
+
+                try {
+                    TimeUnit.MILLISECONDS.sleep(300);
+                } catch (InterruptedException e) {
+                   log.error("InterruptedException");
+                }
+
+                log.info(Thread.currentThread().getName()+" end");
+            }
+        });
+
+        Thread thread = new Thread(() -> exe(10, 2, 300));
         thread.start();
 
 
-
-        TimeUnit.MILLISECONDS.sleep(1000);
+        TimeUnit.MILLISECONDS.sleep(400);
 
         thread.interrupt();
 
         thread.join();
+        Mockito.verify(run, Mockito.atLeast(2)).run(Mockito.anyList());
 
 
         log.info("ok");
@@ -62,25 +90,10 @@ class GroupTaskServiceTest {
     }
 
 
-
-    private   IGroupTaskService.IGroupTask<Integer> exe(int groupSize, int threadSize, int dataSize,int workSize) {
-         GroupTaskService groupTaskService = new GroupTaskService();
+    private IGroupTaskService.IGroupTask<Integer> exe(int groupSize, int threadSize, int dataSize) {
+        GroupTaskService groupTaskService = new GroupTaskService();
         //init task
-        final IGroupTaskService.IGroupTask<Integer> run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
 
-            @Override
-            public void run(List<Integer> tasks) {
-                log.info("start size:{} :{}" ,tasks.size(),tasks);
-                if(workSize>0){
-                    try {
-                        TimeUnit.MILLISECONDS.sleep(workSize);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-                log.info("end");
-            }
-        });
 
         //GIVE
         final List<Integer> collect = IntStream.range(0, dataSize)//
@@ -100,8 +113,6 @@ class GroupTaskServiceTest {
         //when
         groupTaskService.execute(input);
 
-        //then
-        Mockito.verify(run, Mockito.times(groupSize)).run(Mockito.anyList());
 
         return run;
     }
