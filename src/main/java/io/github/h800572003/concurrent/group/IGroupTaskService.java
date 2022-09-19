@@ -16,7 +16,15 @@ public interface IGroupTaskService {
 
 
 
+    /**
+     * 任務作法
+     * @param <T>
+     */
     interface IGroupTask<T> {
+        /**
+         * 執行任務
+         * @param tasks
+         */
         void run(List<T> tasks);
     }
 }

@@ -4,20 +4,27 @@ import io.github.h800572003.concurrent.group.GroupTaskOption;
 import io.github.h800572003.concurrent.group.GroupTaskService;
 import io.github.h800572003.concurrent.group.IGroupTaskService;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.mockito.Mockito;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @Slf4j
 class GroupTaskServiceTest {
     IGroupTaskService.IGroupTask<Integer> run;
 
+
+    private  IGroupTaskService groupTaskService;
     @BeforeEach
     void init() {
         run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
@@ -53,26 +60,20 @@ class GroupTaskServiceTest {
     }
 
     @Test
-    @Timeout(3)
+//    @Timeout(3)
     void executeInterrupt() throws InterruptedException {
 
-       this.run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
+        this.run = Mockito.spy(new IGroupTaskService.IGroupTask<Integer>() {
 
             @Override
             public void run(List<Integer> tasks) {
-                log.info(Thread.currentThread().getName()+" start size:{} :{}", tasks.size(), tasks);
-
-                try {
-                    TimeUnit.MILLISECONDS.sleep(300);
-                } catch (InterruptedException e) {
-                   log.error("InterruptedException");
-                }
-
-                log.info(Thread.currentThread().getName()+" end");
+                log.info(Thread.currentThread().getName() + " start size:{} :{}", tasks.size(), tasks);
+                    count(100);
+                log.info(Thread.currentThread().getName() + " end size:{} :{}", tasks.size(), tasks);
             }
         });
+        Thread thread = new Thread(() -> exe(10, 3, 3000));
 
-        Thread thread = new Thread(() -> exe(10, 2, 300));
         thread.start();
 
 
@@ -81,7 +82,7 @@ class GroupTaskServiceTest {
         thread.interrupt();
 
         thread.join();
-        Mockito.verify(run, Mockito.atLeast(2)).run(Mockito.anyList());
+        Mockito.verify(run, Mockito.times(10)).run(Mockito.anyList());
 
 
         log.info("ok");
@@ -89,9 +90,22 @@ class GroupTaskServiceTest {
 
     }
 
+    void count(int value){
+        if(value<=0){
+//            log.info("end job");
+            return;
+        }else{
+            for(int i=0;i<10000;i++){
+                double random = Math.random();
+            }
+//            log.info("run {} job",value);
+            count(--value);
+        }
+    }
+
 
     private IGroupTaskService.IGroupTask<Integer> exe(int groupSize, int threadSize, int dataSize) {
-        GroupTaskService groupTaskService = new GroupTaskService();
+        this.groupTaskService = new GroupTaskService();
         //init task
 
 

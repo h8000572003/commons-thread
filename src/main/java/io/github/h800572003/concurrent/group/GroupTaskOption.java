@@ -21,6 +21,8 @@ public class GroupTaskOption<T> {
 
     private final IGroup<T> group;
 
+
+
     GroupTaskOption(GroupTaskOptionBuilder<T> builder) {
         this.name = builder.name;
         this.groupSize = builder.groupSize;
