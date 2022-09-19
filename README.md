@@ -36,4 +36,18 @@ public interface IGroupTaskService {
         void run(List<T> tasks);
     }
 }
+
+void test() {
+
+    GroupTaskService groupTaskService = new GroupTaskService();
+    GroupTaskOption.GroupTaskOptionBuilder<Integer> groupTaskOptionBuilder = new GroupTaskOption.GroupTaskOptionBuilder();
+    GroupTaskOption<Integer> input = groupTaskOptionBuilder
+            .name("test")//
+            .threadSize(threadSize)//
+            .groupSize(groupSize)//
+            .task(run)//
+            .tasks(collect)//
+            .build();
+    groupTaskService.execute(input);
+}
 ```
