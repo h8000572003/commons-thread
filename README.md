@@ -3,17 +3,65 @@
 為提升開發速度，提供常用元件設計開放設計，
 
 ### 目前提供功能
+
 * 任務拆分 IGroupTaskService
 
-
 ### CHANGELOG
+
 - 0.0.1  加入任務拆分
 - 0.0.2  修改中斷方式，不強制中斷採取
+- 0.0.3  TaskOverTimeService服務，超過執行數量增加額外Wokr輔助
 
 
 
+```mermaid
+classDiagram
+
+  TaskMasterSlaveService --> TaskMasterSlaveClient
+  TaskMasterSlaveClient --* TaskMasterSlaveObserver
+  
+  class TaskMasterSlaveService{
+   
+    start()
+    getClient()
+  }
+  
+  class TaskMasterSlaveClient{
+    addRegister()
+    start()
+  }
+    
+  class TaskMasterSlaveObserver{
+    update()
+  }
+ 
+```
 
 
+```java
+
+/**
+ * 任務主從服務測試
+ */
+class TaskMasterSlaveServiceTest {
+
+
+    private TaskMasterSlaveService service = new TaskMasterSlaveService(1,
+            1, //
+            3);
+
+    /**
+     * 未啟動Slave
+     */
+    @Test
+    void testMaster() {
+        SpyTask task = Mockito.spy(new SpyTask());
+
+        List<Long> longs = Arrays.asList(1l, 1l, 1l, 1l);
+        service.start(task, longs);
+    }
+}
+```
 
 ```java
 
