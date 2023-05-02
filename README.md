@@ -11,7 +11,7 @@
 - 0.0.1  加入任務拆分
 - 0.0.2  修改中斷方式，不強制中斷採取
 - 0.0.3  TaskOverTimeService服務，超過執行數量增加額外Wokr輔助
-
+- 0.0.4  加入關閉timeout機制
 
 
 ```mermaid
