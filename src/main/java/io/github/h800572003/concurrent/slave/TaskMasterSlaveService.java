@@ -22,12 +22,15 @@ public class TaskMasterSlaveService {
 
     public static final String CORE_PATTEN = "core_";
     public static final String SLAVE_PATTEN = "slave_";
+
     private final long slaveStartSec;//
     private final int slaveSize;//奴隸尺寸
     private final int coreSize;//核心尺寸
 
-    private String masterPrefix = "";
-    private String slavePrefix = "";
+    private final String masterPrefix ;
+    private final String slavePrefix;
+
+
 
     /**
      * 單一主線路服務
@@ -38,25 +41,30 @@ public class TaskMasterSlaveService {
      * @return
      */
     public static TaskMasterSlaveService newSingleCore(long slaveStartSec, int slaveSize, int closeTimeoutSec) {
-        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, closeTimeoutSec, CORE_PATTEN, SLAVE_PATTEN);
+        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, closeTimeoutSec, CORE_PATTEN,SLAVE_PATTEN);
     }
 
 
     public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize) {
-        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN);
+        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN,SLAVE_PATTEN);
     }
 
     /**
-     * @param coreSize      核心數量
-     * @param slaveStartSec 奴隸啟動時間
-     * @param slaveSize     奴隸數量
+     *
+     * @param coreSize 主奴隸數量
+     * @param slaveStartSec 支援奴隸啟動秒數
+     * @param slaveSize 支援奴隸數量
+     * @param closeTimeout 關閉任務timeout時間
+     * @param masterPrefix 主奴隸名稱
+     * @param slavePrefix 支援奴隸名稱
      */
     public TaskMasterSlaveService(int coreSize,//
                                   long slaveStartSec,//
                                   int slaveSize,//
                                   int closeTimeout,
                                   final String masterPrefix,//
-                                  final String slavePrefix) {
+                                  final String slavePrefix
+                                  ) {
         this.masterPrefix = masterPrefix;
         this.slavePrefix = slavePrefix;
         this.coreSize = coreSize;
@@ -79,6 +87,7 @@ public class TaskMasterSlaveService {
                 );//
 
     }
+
 
     /**
      * 啟動
@@ -134,7 +143,6 @@ public class TaskMasterSlaveService {
 
         final ScheduledExecutorService slave;//奴隸服務
 
-        final ScheduledExecutorService slaveStartService;//奴隸啟動排程
 
 
         private final List<T> all;
@@ -149,7 +157,6 @@ public class TaskMasterSlaveService {
 
         private TaskHandle<T> task;//任務處理
 
-        private CountDownLatch slaveLatch = new CountDownLatch(1);//奴隸開關
 
         private List<TaskMasterSlaveObserver<T>> observers = new ArrayList<>();
 
@@ -160,17 +167,16 @@ public class TaskMasterSlaveService {
             this.all = data;
             this.master = new ScheduledThreadPoolExecutor(coreSize, new CustomizableThreadFactory(masterPrefix));
             this.slave = new ScheduledThreadPoolExecutor(slaveSize, new CustomizableThreadFactory(slavePrefix));
-            this.slaveStartService = new ScheduledThreadPoolExecutor(1, new CustomizableThreadFactory("slave_time_"));
             this.taskLatch = new CountDownLatch(data.size());
             this.queue = new LinkedBlockingQueue<>(data);
             this.task = task;
-
         }
 
 
         public void addRegister(TaskMasterSlaveObserver<T> observer) {
             this.observers.add(observer);
         }
+
 
         /**
          * 啟動
@@ -179,7 +185,6 @@ public class TaskMasterSlaveService {
             if (!queue.isEmpty()) {
                 setSlaveStartSec();
                 addCoreWork();
-                addSlave();
             }
             try {
                 this.taskLatch.await();
@@ -207,7 +212,6 @@ public class TaskMasterSlaveService {
             } finally {
                 this.close(this.master::shutdownNow);
                 this.close(this.slave::shutdownNow);
-                this.close(this.slaveStartService::shutdownNow);
 
                 this.observers.forEach(i -> i.updateClose(this.all, this.ok, this.error));
             }
@@ -240,7 +244,7 @@ public class TaskMasterSlaveService {
 
         private void addSlave() {
             for (int i = 0; i < slaveSize; i++) {
-                this.slave.execute(this::executeSlave);
+                this.slave.execute(this::execute);
             }
         }
 
@@ -255,20 +259,10 @@ public class TaskMasterSlaveService {
 
         }
 
-        private void executeSlave() {
-            try {
-                slaveLatch.await();
-                this.execute();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-
-
-        }
 
         private void execute() {
             T data = null;
-            while (!queue.isEmpty() && !Thread.currentThread().isInterrupted() && isRunning.get()) {
+            while (!queue.isEmpty() && !Thread.interrupted() && isRunning.get()) {
                 try {
                     data = queue.take();
                     this.handle(data);
@@ -284,14 +278,18 @@ public class TaskMasterSlaveService {
          * 設定奴隸啟動秒數
          */
         private void setSlaveStartSec() {
-            this.slaveStartService.schedule(() -> {
-                        slaveLatch.countDown();
-                        observers.forEach(TaskMasterSlaveObserver::updateOpenSlave);
-                    }
-                    , slaveStartSec, TimeUnit.SECONDS);
+            this.slave.schedule(this::startSlave, slaveStartSec, TimeUnit.SECONDS);
         }
 
-        public void handle(T t) throws InterruptedException {
+        /**
+         * 時間到啟動服務
+         */
+        private void startSlave() {
+            addSlave();
+            observers.forEach(TaskMasterSlaveObserver::updateOpenSlave);
+        }
+
+        public void handle(T t)  {
             Stopwatch stopwatch = Stopwatch.createStarted();
             try {
                 log.trace("start src {} handle done", t);
@@ -314,9 +312,6 @@ public class TaskMasterSlaveService {
             }
             if (slave != null) {
                 scheduledExecutorServices.add(slave);
-            }
-            if (slaveStartService != null) {
-                scheduledExecutorServices.add(slaveStartService);
             }
             return scheduledExecutorServices;
 

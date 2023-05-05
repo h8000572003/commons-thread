@@ -48,6 +48,7 @@ class TaskMasterSlaveServiceTest {
         List<Long> longs = Arrays.asList(1001l, 1002L, 1003L, 1004L);
 
 
+
         TaskMasterSlaveService.TaskMasterSlaveObserver observer = Mockito.spy(new TaskMasterSlaveService.TaskMasterSlaveObserver() {
 
             @Override
@@ -58,6 +59,16 @@ class TaskMasterSlaveServiceTest {
                 Assertions.assertEquals(0, error.size());
 
             }
+
+            @Override
+            public void updateOpenSlave() {
+               log.info("updateOpenSlave..");
+            }
+
+            @Override
+            public void updateInterrupted() {
+                log.info("updateInterrupted..");
+            }
         });
 
         TaskMasterSlaveService.TaskMasterSlaveClient client = service.getClient(task, longs);
@@ -65,9 +76,16 @@ class TaskMasterSlaveServiceTest {
         client.start();
 
 
-        Mockito.verify(task, Mockito.times(4)).handle(Mockito.anyLong());
+        Mockito.verify(task, Mockito.times(longs.size())).handle(Mockito.anyLong());//呼叫正確次數
 
-        Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(), Mockito.anyList(), Mockito.anyList());
+        ArgumentCaptor<List<Long>> errorTask = ArgumentCaptor.forClass(List.class);
+        Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(), errorTask.capture(), Mockito.anyList());//服務關閉
+        Assertions.assertEquals(longs.size(),errorTask.getValue().size());//確認完成4項
+
+        Mockito.verify(observer,Mockito.times(1)).updateOpenSlave();//開啟次奴隸
+
+        Mockito.verify(observer,Mockito.times(0)).updateInterrupted();//未發生中斷事件
+
     }
 
     /**
@@ -96,7 +114,7 @@ class TaskMasterSlaveServiceTest {
             }
         });
         Thread end = new Thread(() -> {
-            List<Long> longs = Arrays.asList(1001L, 5001L);
+            List<Long> longs = Arrays.asList(1001L, 5001L,5002L);
             TaskMasterSlaveService.TaskMasterSlaveClient client = service.getClient(task, longs);
             client.addRegister(observer);
             client.start();
@@ -217,9 +235,7 @@ class TaskMasterSlaveServiceTest {
 
         }
 
-        public boolean runnable() {
-            return true;
-        }
+
     }
 
 
