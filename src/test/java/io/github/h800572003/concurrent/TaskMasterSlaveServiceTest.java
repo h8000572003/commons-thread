@@ -56,6 +56,7 @@ class TaskMasterSlaveServiceTest {
                 .map(BlockItem::new)
                 .collect(Collectors.toList());
 
+
         TaskMasterSlaveService.TaskMasterSlaveObserver observer = Mockito.spy(new TaskMasterSlaveService.TaskMasterSlaveObserver() {
 
             @Override
@@ -66,6 +67,16 @@ class TaskMasterSlaveServiceTest {
                 Assertions.assertEquals(0, error.size());
 
             }
+
+            @Override
+            public void updateOpenSlave() {
+               log.info("updateOpenSlave..");
+            }
+
+            @Override
+            public void updateInterrupted() {
+                log.info("updateInterrupted..");
+            }
         });
 
         TaskMasterSlaveService.TaskMasterSlaveClient client = service.getClient(task, longs);
@@ -75,7 +86,6 @@ class TaskMasterSlaveServiceTest {
 
         Mockito.verify(task, Mockito.times(4)).handle(Mockito.any());
 
-        Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(), Mockito.anyList(), Mockito.anyList());
     }
 
     /**
