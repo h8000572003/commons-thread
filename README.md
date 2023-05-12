@@ -13,7 +13,7 @@
 - 0.0.3  TaskOverTimeService服務，超過執行數量增加額外Wokr輔助
 - 0.0.4  加入關閉timeout機制
 - 0.0.5  奴隸不主動加入，時間到在加入
-
+- 0.0.6  加入加入根據順序且同樣key資料不得同時執行
 
 ```mermaid
 classDiagram
