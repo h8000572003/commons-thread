@@ -12,7 +12,7 @@
 	</parent>
 	<groupId>io.github.h8000572003</groupId>
 	<artifactId>commons-thread</artifactId>
-	<version>0.0.3</version>
+	<version>0.0.5</version>
 	<name>${project.groupId}:${project.artifactId}</name>
 	<packaging>jar</packaging>
 	<description>commons utils</description>
@@ -128,6 +128,12 @@
 			<artifactId>awaitility</artifactId>
 			<version>2.0.0</version>
 			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>io.github.h8000572003</groupId>
+			<artifactId>commons</artifactId>
+			<version>0.2.8</version>
 		</dependency>
 	</dependencies>
 	<build>

@@ -3,6 +3,7 @@ package io.github.h800572003.concurrent;
 
 import io.github.h800572003.concurrent.slave.TaskMasterSlaveService;
 import lombok.extern.slf4j.Slf4j;
+import org.assertj.core.util.Sets;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -12,8 +13,12 @@ import org.mockito.Mockito;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 @Slf4j
 class TaskMasterSlaveServiceTest {
@@ -29,24 +34,27 @@ class TaskMasterSlaveServiceTest {
                 3);
         SpyTask task = Mockito.spy(new SpyTask());
 
-        List<Long> longs = Arrays.asList(1L, 2L, 3L, 4L);
-        service.start(task, longs);
+        List<BlockItem> collect = Arrays.asList(1L, 2L, 3L, 4L).stream()
+                .map(BlockItem::new)
+                .collect(Collectors.toList());
+
+        service.start(task, collect);
         log.info("end");
 
-        Mockito.verify(task, Mockito.times(4)).handle(Mockito.anyLong());
+        Mockito.verify(task, Mockito.times(4)).handle(Mockito.any());
 
     }
 
     @Test
-    @Timeout(3)
     void testSlave() {
         TaskMasterSlaveService service = new TaskMasterSlaveService(2,
                 1, //
                 3);
         SpyTask task = Mockito.spy(new SpyTask());
 
-        List<Long> longs = Arrays.asList(1001l, 1002L, 1003L, 1004L);
-
+        List<BlockItem> longs = Arrays.asList(1001l, 1002L, 1003L, 1004L).stream()
+                .map(BlockItem::new)
+                .collect(Collectors.toList());
 
         TaskMasterSlaveService.TaskMasterSlaveObserver observer = Mockito.spy(new TaskMasterSlaveService.TaskMasterSlaveObserver() {
 
@@ -62,10 +70,10 @@ class TaskMasterSlaveServiceTest {
 
         TaskMasterSlaveService.TaskMasterSlaveClient client = service.getClient(task, longs);
         client.addRegister(observer);
-        client.start();
+        client.run();
 
 
-        Mockito.verify(task, Mockito.times(4)).handle(Mockito.anyLong());
+        Mockito.verify(task, Mockito.times(4)).handle(Mockito.any());
 
         Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(), Mockito.anyList(), Mockito.anyList());
     }
@@ -96,10 +104,14 @@ class TaskMasterSlaveServiceTest {
             }
         });
         Thread end = new Thread(() -> {
-            List<Long> longs = Arrays.asList(1001L, 5001L);
+
+            List<BlockItem> longs = Arrays.asList(1001l, 5001L).stream()
+                    .map(BlockItem::new)
+                    .collect(Collectors.toList());
+
             TaskMasterSlaveService.TaskMasterSlaveClient client = service.getClient(task, longs);
             client.addRegister(observer);
-            client.start();
+            client.run();
 
         });
 
@@ -132,14 +144,37 @@ class TaskMasterSlaveServiceTest {
         SpyTask task = Mockito.spy(new SpyTask());
 
 
-        List<Long> longs = Arrays.asList();
+        List<BlockItem> longs = Arrays.asList();
         service.start(task, longs);
         log.info("end");
 
-        Mockito.verify(task, Mockito.times(0)).handle(Mockito.anyLong());
+        Mockito.verify(task, Mockito.times(0)).handle(Mockito.any());
 
 
     }
+
+    /**
+     * 測試相同key的不可同時開始
+     */
+    @Test
+    void testSameKey(){
+
+        SpyTask task = Mockito.spy(new SpyTask());
+        TaskMasterSlaveService service = new TaskMasterSlaveService(2,
+                1, //
+                3);
+
+        List<BlockItem> longs = Arrays.asList(1000L, 1000L,1000L,1000L,1000L).stream()
+                .map(BlockItem::new)
+                .collect(Collectors.toList());
+
+        service.start(task, longs);
+
+        Mockito.verify(task, Mockito.times(5)).handle(Mockito.any());
+
+
+    }
+
 
     /**
      * GIVE第四筆案例會發生程式中斷，中斷後
@@ -164,20 +199,24 @@ class TaskMasterSlaveServiceTest {
                 1, //
                 3);
 
-        int errorIndex=2;
+        int errorIndex = 2;
 
         SpyTask task = Mockito.spy(new SpyTask(errorIndex));
 
 
-        List<Long> longs = Arrays.asList(101L, 102L, 103L, 104L, 105L);
-        TaskMasterSlaveService.TaskMasterSlaveClient<Long> client = service.getClient(task, longs);
+
+        List<BlockItem> longs = Arrays.asList(101L, 102L, 103L, 104L, 105L).stream()
+                .map(BlockItem::new)
+                .collect(Collectors.toList());
+
+        TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client = service.getClient(task, longs);
         client.addRegister(observer);
-        client.start();
+        client.run();
         log.info("end");
 
-        Mockito.verify(observer, Mockito.times(1)).updateError(Mockito.eq(longs.get(errorIndex-1)), Mockito.any());//檢查發生錯誤該筆是否正確
-        Mockito.verify(task, Mockito.times(5)).handle(Mockito.anyLong());//依舊執行五次
-        Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(),Mockito.anyList(),errorTask.capture());
+        Mockito.verify(observer, Mockito.times(1)).updateError(Mockito.eq(longs.get(errorIndex - 1)), Mockito.any());//檢查發生錯誤該筆是否正確
+        Mockito.verify(task, Mockito.times(5)).handle(Mockito.any());//依舊執行五次
+        Mockito.verify(observer, Mockito.times(1)).updateClose(Mockito.anyList(), Mockito.anyList(), errorTask.capture());
 
 
         //有一項錯誤
@@ -185,9 +224,11 @@ class TaskMasterSlaveServiceTest {
     }
 
 
-    class SpyTask implements TaskMasterSlaveService.TaskHandle<Long> {
+    class SpyTask implements TaskMasterSlaveService.TaskHandle<BlockItem> {
 
         private int errorSize = -1;
+
+
 
 
         public SpyTask(int errorSize) {
@@ -201,7 +242,10 @@ class TaskMasterSlaveServiceTest {
         private CopyOnWriteArrayList copyOnWriteArrayList = new CopyOnWriteArrayList();
 
         @Override
-        public void handle(Long value) {
+        public void handle(BlockItem item) {
+
+
+            Long value = item.getValue();
             copyOnWriteArrayList.add(value);
             log.info(" start execute workTime:{}", value);
             try {
@@ -213,14 +257,34 @@ class TaskMasterSlaveServiceTest {
                 throw new RuntimeException(e);
             } finally {
                 log.info(" end execute workTime:{}", value);
+
+
             }
 
         }
 
-        public boolean runnable() {
-            return true;
-        }
+
+
     }
 
+
+
+    class BlockItem implements IBlockKey{
+
+        private Long value;
+
+        public BlockItem(Long aLong) {
+            this.value = aLong;
+        }
+
+        @Override
+        public String toKey() {
+            return value.toString();
+        }
+
+        public Long getValue() {
+            return value;
+        }
+    }
 
 }

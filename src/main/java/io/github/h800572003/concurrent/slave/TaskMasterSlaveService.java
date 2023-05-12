@@ -2,6 +2,8 @@ package io.github.h800572003.concurrent.slave;
 
 import com.google.common.base.Stopwatch;
 import io.github.h800572003.concurrent.ConcurrentException;
+import io.github.h800572003.concurrent.IBlockKey;
+import io.github.h800572003.concurrent.OrderQueue;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
@@ -71,11 +73,18 @@ public class TaskMasterSlaveService {
         }
     }
 
-    public <T> TaskMasterSlaveClient<T> getClient(TaskHandle<T> task, List<T> data) {
+    public <T extends IBlockKey> TaskMasterSlaveClient<T> getClient(TaskHandle<T> task, List<T> data) {
+        return
+                getClient(task, data, new OrderQueue<T>());
+
+    }
+
+    public <T extends IBlockKey> TaskMasterSlaveClient<T> getClient(TaskHandle<T> task, List<T> data, OrderQueue<T> queue) {
         return
                 new TaskMasterSlaveClient<>(//
                         data,//
-                        task//
+                        task,//
+                        queue
                 );//
 
     }
@@ -87,9 +96,21 @@ public class TaskMasterSlaveService {
      * @param data
      * @param <T>
      */
-    public <T> void start(TaskHandle<T> task, List<T> data) {
-        this.getClient(task, data).start();
+    public <T extends IBlockKey> void start(TaskHandle<T> task, List<T> data, OrderQueue<T> queue) {
+        this.getClient(task, data, queue).run();
     }
+
+    /**
+     * 啟動
+     *
+     * @param task
+     * @param data
+     * @param <T>
+     */
+    public <T extends IBlockKey> void start(TaskHandle<T> task, List<T> data) {
+        this.getClient(task, data).run();
+    }
+
 
     /**
      * 任務觀察者
@@ -129,7 +150,7 @@ public class TaskMasterSlaveService {
      *
      * @param <T>
      */
-    public class TaskMasterSlaveClient<T> {
+    public class TaskMasterSlaveClient<T extends IBlockKey> {
         final ScheduledExecutorService master;//主要任務
 
         final ScheduledExecutorService slave;//奴隸服務
@@ -141,7 +162,7 @@ public class TaskMasterSlaveService {
         private final List<T> ok = new CopyOnWriteArrayList<>();
         private final List<T> error = new CopyOnWriteArrayList<>();
 
-        private final BlockingQueue<T> queue;
+        private final OrderQueue<T> queue;
 
 
         private CountDownLatch taskLatch;//任務栓
@@ -156,13 +177,13 @@ public class TaskMasterSlaveService {
         private AtomicBoolean isRunning = new AtomicBoolean(true);
 
 
-        public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task) {
+        public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task, OrderQueue<T> queue) {
             this.all = data;
             this.master = new ScheduledThreadPoolExecutor(coreSize, new CustomizableThreadFactory(masterPrefix));
             this.slave = new ScheduledThreadPoolExecutor(slaveSize, new CustomizableThreadFactory(slavePrefix));
             this.slaveStartService = new ScheduledThreadPoolExecutor(1, new CustomizableThreadFactory("slave_time_"));
             this.taskLatch = new CountDownLatch(data.size());
-            this.queue = new LinkedBlockingQueue<>(data);
+            this.queue = queue;
             this.task = task;
 
         }
@@ -175,12 +196,11 @@ public class TaskMasterSlaveService {
         /**
          * 啟動
          */
-        public void start() {
-            if (!queue.isEmpty()) {
-                setSlaveStartSec();
-                addCoreWork();
-                addSlave();
-            }
+        public void run() {
+            addProducer();
+            setSlaveStartSec();
+            addCoreWork();
+            addSlave();
             try {
                 this.taskLatch.await();
             } catch (InterruptedException e) {
@@ -189,6 +209,15 @@ public class TaskMasterSlaveService {
             } finally {
                 shutdown();
             }
+        }
+
+        private void addProducer() {
+            Thread thread = new Thread(() -> {
+                for (T t : all) {
+                    this.queue.add(t);
+                }
+            });
+            thread.start();
         }
 
         private void shutdown() {
@@ -268,12 +297,14 @@ public class TaskMasterSlaveService {
 
         private void execute() {
             T data = null;
-            while (!queue.isEmpty() && !Thread.currentThread().isInterrupted() && isRunning.get()) {
+            while (!Thread.currentThread().isInterrupted() && isRunning.get()) {
                 try {
                     data = queue.take();
                     this.handle(data);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                } finally {
+                    queue.remove(data);
                 }
             }
             log.trace("work recycle..");
