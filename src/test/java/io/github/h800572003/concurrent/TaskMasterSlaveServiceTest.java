@@ -3,7 +3,6 @@ package io.github.h800572003.concurrent;
 
 import io.github.h800572003.concurrent.slave.TaskMasterSlaveService;
 import lombok.extern.slf4j.Slf4j;
-import org.assertj.core.util.Sets;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -13,15 +12,113 @@ import org.mockito.Mockito;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 @Slf4j
 class TaskMasterSlaveServiceTest {
+
+
+    /**
+     *
+     * give 給100無法完成總數任務
+     * and core worker :2
+     * and slave worker:3
+     * and 停止任務 不強制中斷5秒
+     * and 若分配下工作等無限時間
+     * when執行任務
+     * and 5秒鐘中斷
+     * then
+     *  give ok item < total tasks
+     *  but
+     *  worker recycle count
+     */
+    @Test
+    @Disabled
+    void testLongTimeTask() throws InterruptedException {
+        final Task task = new Task();
+
+        //give task size {int}
+        final List<BlockItem> collect = LongStream.range(1, 100).boxed().map(BlockItem::new).collect(Collectors.toList());
+
+        //recycle worker
+        final List<Thread> workers = new CopyOnWriteArrayList<>();
+
+        Thread thread = getThread(task, collect, workers);
+        TimeUnit.SECONDS.sleep(5);
+        thread.interrupt();
+        thread.join();
+
+        log.info("alive value:{}", task.alive.get());
+        log.info("start value:{}", task.startValue.get());
+        log.info("endValue value:{}", task.endValue.get());
+        log.info("interruptedExceptionValue value:{}", task.interruptedExceptionValue.get());
+        log.info("worker size:{}", workers.size());
+
+        Assertions.assertEquals(0, task.alive.get());
+        Assertions.assertTrue(collect.size() >= task.startValue.get());
+        Assertions.assertTrue(collect.size() >= task.endValue.get());
+        Assertions.assertTrue(task.startValue.get() >= task.endValue.get());
+        Assertions.assertEquals(5, workers.size());
+    }
+
+    private static Thread getThread(Task task, List<BlockItem> collect, List<Thread> workers) {
+        Thread thread = new Thread(() -> {
+            TaskMasterSlaveService service = new TaskMasterSlaveService(2,
+                    1, //
+                    3, 5, "master", "slave", -1);
+
+            TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client = service.getClient(task, collect);
+
+            client.addRegister(new TaskMasterSlaveService.TaskMasterSlaveObserver<BlockItem>() {
+                @Override
+                public void updateRecycle(Thread currentTread) {
+                    workers.add(currentTread);
+                }
+            });
+            client.run();
+
+        });
+        thread.start();
+        return thread;
+    }
+
+    class Task implements TaskMasterSlaveService.TaskHandle<BlockItem> {
+
+        private AtomicInteger startValue = new AtomicInteger(0);
+        private AtomicInteger endValue = new AtomicInteger(0);
+        private AtomicInteger interruptedExceptionValue = new AtomicInteger(0);
+
+        private AtomicInteger alive = new AtomicInteger(0);
+
+        @Override
+        public void handle(BlockItem data) {
+            startValue.incrementAndGet();
+            alive.incrementAndGet();
+            log.info(data.getValue() + " start task");
+            try {
+                TimeUnit.SECONDS.sleep(data.getValue());
+            } catch (InterruptedException e) {
+                interruptedExceptionValue.get();
+            } finally {
+                alive.decrementAndGet();
+                closeTask(data);
+                log.info(data.getValue() + " close task");
+                endValue.incrementAndGet();
+            }
+        }
+
+        private void closeTask(BlockItem data) {
+            try {
+                TimeUnit.SECONDS.sleep(data.getValue());
+            } catch (InterruptedException ex) {
+//                    throw new RuntimeException(ex);
+            }
+        }
+    }
 
 
     /**
@@ -70,7 +167,7 @@ class TaskMasterSlaveServiceTest {
 
             @Override
             public void updateOpenSlave() {
-               log.info("updateOpenSlave..");
+                log.info("updateOpenSlave..");
             }
 
             @Override
@@ -99,7 +196,7 @@ class TaskMasterSlaveServiceTest {
     @Test
     void testInterrupted() throws InterruptedException {
 
-        TaskMasterSlaveService service = TaskMasterSlaveService.newSingleCore(1, 1, 5);
+        TaskMasterSlaveService service = TaskMasterSlaveService.newSingleCore(1, 1, 5, Integer.MAX_VALUE);
 
         SpyTask task = Mockito.spy(new SpyTask());
 
@@ -167,14 +264,14 @@ class TaskMasterSlaveServiceTest {
      * 測試相同key的不可同時開始
      */
     @Test
-    void testSameKey(){
+    void testSameKey() {
 
         SpyTask task = Mockito.spy(new SpyTask());
         TaskMasterSlaveService service = new TaskMasterSlaveService(2,
                 1, //
                 3);
 
-        List<BlockItem> longs = Arrays.asList(1000L, 1000L,1000L,1000L,1000L).stream()
+        List<BlockItem> longs = Arrays.asList(1000L, 1000L, 1000L, 1000L, 1000L).stream()
                 .map(BlockItem::new)
                 .collect(Collectors.toList());
 
@@ -214,7 +311,6 @@ class TaskMasterSlaveServiceTest {
         SpyTask task = Mockito.spy(new SpyTask(errorIndex));
 
 
-
         List<BlockItem> longs = Arrays.asList(101L, 102L, 103L, 104L, 105L).stream()
                 .map(BlockItem::new)
                 .collect(Collectors.toList());
@@ -237,8 +333,6 @@ class TaskMasterSlaveServiceTest {
     class SpyTask implements TaskMasterSlaveService.TaskHandle<BlockItem> {
 
         private int errorSize = -1;
-
-
 
 
         public SpyTask(int errorSize) {
@@ -274,12 +368,10 @@ class TaskMasterSlaveServiceTest {
         }
 
 
-
     }
 
 
-
-    class BlockItem implements IBlockKey{
+    class BlockItem implements IBlockKey {
 
         private Long value;
 

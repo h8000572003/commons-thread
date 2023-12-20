@@ -20,6 +20,7 @@ public class TaskMasterSlaveService {
 
     public static final int DEFAULT_CLOSE_TIMEOUT = 60;
     private final int closeTimeout;
+    private int shutdownTimeout = -1;
 
 
     public static final String CORE_PATTEN = "core_";
@@ -41,13 +42,16 @@ public class TaskMasterSlaveService {
      * @param closeTimeoutSec 關閉等待秒數
      * @return
      */
-    public static TaskMasterSlaveService newSingleCore(long slaveStartSec, int slaveSize, int closeTimeoutSec) {
-        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, closeTimeoutSec, CORE_PATTEN, SLAVE_PATTEN);
+    public static TaskMasterSlaveService newSingleCore(long slaveStartSec, int slaveSize, int closeTimeoutSec,int shutdownTimeout) {
+        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, closeTimeoutSec, CORE_PATTEN, SLAVE_PATTEN, shutdownTimeout);
     }
 
 
     public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize) {
-        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN);
+        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN, -1);
+    }
+    public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize,int shutdownTimeout) {
+        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN, shutdownTimeout);
     }
 
     /**
@@ -63,7 +67,8 @@ public class TaskMasterSlaveService {
                                   int slaveSize,//
                                   int closeTimeout,
                                   final String masterPrefix,//
-                                  final String slavePrefix
+                                  final String slavePrefix,
+                                  final int shutdownTimeout
     ) {
         this.masterPrefix = masterPrefix;
         this.slavePrefix = slavePrefix;
@@ -71,6 +76,7 @@ public class TaskMasterSlaveService {
         this.closeTimeout = closeTimeout;
         this.slaveStartSec = slaveStartSec;
         this.slaveSize = slaveSize;
+        this.shutdownTimeout = shutdownTimeout < 0 ? Integer.MAX_VALUE : shutdownTimeout;
         if (this.slaveSize <= 0) {
             throw new ConcurrentException("work size more than 0");
         }
@@ -149,6 +155,9 @@ public class TaskMasterSlaveService {
         default void updateError(T data, Throwable throwable) {
 
         }
+        default void updateRecycle(Thread currentTread){
+
+        }
     }
 
 
@@ -170,15 +179,15 @@ public class TaskMasterSlaveService {
         private final OrderQueue<T> queue;
 
 
-        private CountDownLatch taskLatch;//任務栓
+        private final CountDownLatch taskLatch;//任務栓
 
 
-        private TaskHandle<T> task;//任務處理
+        private final TaskHandle<T> task;//任務處理
 
 
-        private List<TaskMasterSlaveObserver<T>> observers = new ArrayList<>();
+        private final List<TaskMasterSlaveObserver<T>> observers = new ArrayList<>();
 
-        private AtomicBoolean isRunning = new AtomicBoolean(true);
+        private final AtomicBoolean isRunning = new AtomicBoolean(true);
 
 
         public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task, OrderQueue<T> queue) {
@@ -208,10 +217,12 @@ public class TaskMasterSlaveService {
             try {
                 this.taskLatch.await();
             } catch (InterruptedException e) {
-                log.info("get InterruptedException");
                 Thread.currentThread().interrupt();
+                getScheduledExecutorService().forEach(i -> this.handleException(i::shutdown));//不在加入新項目
+                log.info("get InterruptedException");
+                this.isRunning.set(false);
             } finally {
-                shutdown();
+                close();
             }
         }
 
@@ -227,45 +238,38 @@ public class TaskMasterSlaveService {
             thread.start();
         }
 
-        private void shutdown() {
+        private void close() {
             try {
                 if (Thread.interrupted()) {
                     observers.forEach(TaskMasterSlaveObserver::updateInterrupted);
-                    this.isRunning.set(false);
                     try {
                         log.info("wait..start");
-                        getScheduledExecutorService().forEach(i -> this.close(i::shutdown));
-                        getScheduledExecutorService().forEach(this::awaitTermination);
+                        getScheduledExecutorService().forEach(this::shutdownNow);
                     } finally {
                         log.info("wait..end");
                     }
                 }
             } finally {
-                this.close(this.master::shutdownNow);
-                this.close(this.slave::shutdownNow);
-
                 this.observers.forEach(i -> i.updateClose(this.all, this.ok, this.error));
             }
 
 
         }
 
-        private void awaitTermination(final ScheduledExecutorService scheduledExecutorService) {
-            int waitSect = 0;
-            while (true) {
-                try {
-                    while (!scheduledExecutorService.awaitTermination(1, TimeUnit.SECONDS) && waitSect++ <= closeTimeout) {
-                        log.debug("wait..{}", waitSect);
-                    }
-                    break;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+        private void shutdownNow(ScheduledExecutorService i) {
+            try {
+                if (!i.awaitTermination(closeTimeout, TimeUnit.SECONDS)) {
+                    this.handleException(this.master::shutdownNow);
+                    this.handleException(this.slave::shutdownNow);
+                    log.info("shutdownNow awaitTermination:{}", i.awaitTermination(shutdownTimeout, TimeUnit.SECONDS));
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
-
         }
 
-        private void close(Runnable runnable) {
+
+        private void handleException(Runnable runnable) {
             try {
                 runnable.run();
             } catch (Exception e) {
@@ -293,7 +297,7 @@ public class TaskMasterSlaveService {
 
         private void execute() {
             T data = null;
-            while (!queue.isEmpty()&&!Thread.currentThread().isInterrupted() && isRunning.get()) {
+            while (!queue.isEmpty() && !Thread.currentThread().isInterrupted() && isRunning.get()) {
                 try {
                     data = queue.take();
                     this.handle(data);
@@ -305,7 +309,7 @@ public class TaskMasterSlaveService {
                     }
                 }
             }
-            log.trace("work recycle..");
+            this.observers.forEach(i -> i.updateRecycle(Thread.currentThread()));
         }
 
 
