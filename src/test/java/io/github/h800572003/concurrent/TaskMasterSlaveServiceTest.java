@@ -23,14 +23,53 @@ class TaskMasterSlaveServiceTest {
 
 
     /**
+     * 測試工人數量大於任務數，且任務屬於長時間任務
+     * give core worker :2
+     * and slave worker:3
+     * and 停止任務 不強制中斷5秒
+     * and 若分配下工作等無限時間
      *
+     * when執行任務
+     * and 5秒鐘中斷
+     *
+     * then
+     *  give ok item < total tasks
+     *  but
+     *  worker recycle count
+     */
+    @Test
+    @Disabled
+    void testLessTask()throws InterruptedException{
+        final Task task = new Task();
+
+        //give task size {int}
+        final List<BlockItem> collect = LongStream.range(8, 10).boxed().map(BlockItem::new).collect(Collectors.toList());
+
+
+        final List<Thread> workers = new CopyOnWriteArrayList<>();
+        Thread thread = getThread(task, collect, workers);
+        TimeUnit.SECONDS.sleep(5);
+        thread.interrupt();
+        thread.join();
+
+        log.info("alive value:{}", task.alive.get());
+        log.info("start value:{}", task.startValue.get());
+        log.info("endValue value:{}", task.endValue.get());
+        log.info("interruptedExceptionValue value:{}", task.interruptedExceptionValue.get());
+        log.info("worker size:{}", workers.size());
+    }
+
+    /**
+     * 測試工人數量小於任務數，且任務屬於長時間任務
      * give 給100無法完成總數任務
      * and core worker :2
      * and slave worker:3
      * and 停止任務 不強制中斷5秒
      * and 若分配下工作等無限時間
+     *
      * when執行任務
      * and 5秒鐘中斷
+     *
      * then
      *  give ok item < total tasks
      *  but
