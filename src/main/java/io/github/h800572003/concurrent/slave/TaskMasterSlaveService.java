@@ -20,7 +20,7 @@ public class TaskMasterSlaveService {
 
     public static final int DEFAULT_CLOSE_TIMEOUT = 60;
     private final int closeTimeout;
-    private int shutdownTimeout = -1;
+    private final int shutdownTimeout;
 
 
     public static final String CORE_PATTEN = "core_";
@@ -87,7 +87,7 @@ public class TaskMasterSlaveService {
 
     public <T extends IBlockKey> TaskMasterSlaveClient<T> getClient(TaskHandle<T> task, List<T> data) {
         return
-                getClient(task, data, new OrderQueue<T>());
+                getClient(task, data, new OrderQueue<>());
 
     }
 
@@ -218,10 +218,9 @@ public class TaskMasterSlaveService {
                 this.taskLatch.await();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                getScheduledExecutorService().forEach(i -> this.handleException(i::shutdown));//不在加入新項目
-                log.info("get InterruptedException");
                 this.isRunning.set(false);
             } finally {
+                getScheduledExecutorService().forEach(i -> this.handleException(i::shutdown));
                 close();
             }
         }
@@ -259,6 +258,7 @@ public class TaskMasterSlaveService {
         private void shutdownNow(ScheduledExecutorService i) {
             try {
                 if (!i.awaitTermination(closeTimeout, TimeUnit.SECONDS)) {
+                    log.info("shutdown not all done");
                     this.handleException(this.master::shutdownNow);
                     this.handleException(this.slave::shutdownNow);
                     log.info("shutdownNow awaitTermination:{}", i.awaitTermination(shutdownTimeout, TimeUnit.SECONDS));
@@ -356,6 +356,8 @@ public class TaskMasterSlaveService {
 
 
         }
+
+
     }
 
 
