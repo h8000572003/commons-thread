@@ -4,8 +4,10 @@ import com.google.common.base.Stopwatch;
 import io.github.h800572003.concurrent.ConcurrentException;
 import io.github.h800572003.concurrent.IBlockKey;
 import io.github.h800572003.concurrent.OrderQueue;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
+import org.springframework.util.CollectionUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,21 +20,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public class TaskMasterSlaveService {
 
-    public static final int DEFAULT_CLOSE_TIMEOUT = 60;
-    private final int closeTimeout;
-    private final int shutdownTimeout;
-
-
     public static final String CORE_PATTEN = "core_";
-    public static final String SLAVE_PATTEN = "slave_";
 
     private final long slaveStartSec;//
     private final int slaveSize;//奴隸尺寸
     private final int coreSize;//核心尺寸
 
     private final String masterPrefix;
-    private final String slavePrefix;
 
+
+
+
+
+    private final AtomicBoolean isRunning = new AtomicBoolean(true);
 
     /**
      * 單一主線路服務
@@ -42,41 +42,34 @@ public class TaskMasterSlaveService {
      * @param closeTimeoutSec 關閉等待秒數
      * @return
      */
-    public static TaskMasterSlaveService newSingleCore(long slaveStartSec, int slaveSize, int closeTimeoutSec,int shutdownTimeout) {
-        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, closeTimeoutSec, CORE_PATTEN, SLAVE_PATTEN, shutdownTimeout);
+    public static TaskMasterSlaveService newSingleCore(long slaveStartSec, int slaveSize, int closeTimeoutSec, int shutdownTimeout) {
+        return new TaskMasterSlaveService(1, slaveStartSec, slaveSize, CORE_PATTEN);
     }
 
 
     public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize) {
-        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN, -1);
+        this(coreSize, slaveStartSec, slaveSize, CORE_PATTEN);
     }
-    public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize,int shutdownTimeout) {
-        this(coreSize, slaveStartSec, slaveSize, DEFAULT_CLOSE_TIMEOUT, CORE_PATTEN, SLAVE_PATTEN, shutdownTimeout);
+
+    public TaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize, int shutdownTimeout) {
+        this(coreSize, slaveStartSec, slaveSize, CORE_PATTEN);
     }
 
     /**
      * @param coreSize      主奴隸數量
      * @param slaveStartSec 支援奴隸啟動秒數
      * @param slaveSize     支援奴隸數量
-     * @param closeTimeout  關閉任務timeout時間
      * @param masterPrefix  主奴隸名稱
-     * @param slavePrefix   支援奴隸名稱
      */
     public TaskMasterSlaveService(int coreSize,//
                                   long slaveStartSec,//
                                   int slaveSize,//
-                                  int closeTimeout,
-                                  final String masterPrefix,//
-                                  final String slavePrefix,
-                                  final int shutdownTimeout
+                                  final String masterPrefix//
     ) {
         this.masterPrefix = masterPrefix;
-        this.slavePrefix = slavePrefix;
         this.coreSize = coreSize;
-        this.closeTimeout = closeTimeout;
         this.slaveStartSec = slaveStartSec;
         this.slaveSize = slaveSize;
-        this.shutdownTimeout = shutdownTimeout < 0 ? Integer.MAX_VALUE : shutdownTimeout;
         if (this.slaveSize <= 0) {
             throw new ConcurrentException("work size more than 0");
         }
@@ -155,7 +148,8 @@ public class TaskMasterSlaveService {
         default void updateError(T data, Throwable throwable) {
 
         }
-        default void updateRecycle(Thread currentTread){
+
+        default void updateRecycle(Thread currentTread) {
 
         }
     }
@@ -167,36 +161,33 @@ public class TaskMasterSlaveService {
      * @param <T>
      */
     public class TaskMasterSlaveClient<T extends IBlockKey> {
-        final ScheduledExecutorService master;//主要任務
-
-        final ScheduledExecutorService slave;//奴隸服務
-
-
-        private final List<T> all;
+        final ScheduledExecutorService service;//主要任務
         private final List<T> ok = new CopyOnWriteArrayList<>();
         private final List<T> error = new CopyOnWriteArrayList<>();
 
         private final OrderQueue<T> queue;
 
-
-        private final CountDownLatch taskLatch;//任務栓
-
-
         private final TaskHandle<T> task;//任務處理
-
 
         private final List<TaskMasterSlaveObserver<T>> observers = new ArrayList<>();
 
-        private final AtomicBoolean isRunning = new AtomicBoolean(true);
+        private final ExecutorCompletionService<String> completionService;
+        private final CountDownLatch latch;
+
+        @Getter
+        private final List<Worker<T>> workers = new CopyOnWriteArrayList<>();
+        private final List<T> data;
 
 
         public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task, OrderQueue<T> queue) {
-            this.all = data;
-            this.master = new ScheduledThreadPoolExecutor(coreSize, new CustomizableThreadFactory(masterPrefix));
-            this.slave = new ScheduledThreadPoolExecutor(slaveSize, new CustomizableThreadFactory(slavePrefix));
-            this.taskLatch = new CountDownLatch(data.size());
+            this.data = data;
+            this.service = new ScheduledThreadPoolExecutor(coreSize + slaveSize, new CustomizableThreadFactory(masterPrefix));
+            this.completionService = new ExecutorCompletionService<>(this.service);
             this.queue = queue;
             this.task = task;
+            data.forEach(queue::add);
+            this.latch = new CountDownLatch(data.size());
+            this.addWork();
         }
 
 
@@ -209,155 +200,45 @@ public class TaskMasterSlaveService {
          * 啟動
          */
         public void run() {
-            if (!all.isEmpty()) {
-                addProducer();
-                setSlaveStartSec();
-                addCoreWork();
-            }
             try {
-                this.taskLatch.await();
+                log.info("awaiting start");
+                latch.await();
+                log.info("awaiting done");
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                this.isRunning.set(false);
+                log.info("Interrupted");
+                isRunning.set(false);
             } finally {
-                getScheduledExecutorService().forEach(i -> this.handleException(i::shutdown));
-                close();
+                log.info("finally");
+                isRunning.set(false);
+                service.shutdownNow();
+                awiat();
             }
         }
 
-        /**
-         * 加入生產者
-         */
-        private void addProducer() {
-            Thread thread = new Thread(() -> {
-                for (T t : all) {
-                    this.queue.add(t);
-                }
-            });
-            thread.start();
-        }
-
-        private void close() {
+        private void awiat() {
+            log.info("call shutdown");
             try {
-                if (Thread.interrupted()) {
-                    observers.forEach(TaskMasterSlaveObserver::updateInterrupted);
-                    try {
-                        log.info("wait..start");
-                        getScheduledExecutorService().forEach(this::shutdownNow);
-                    } finally {
-                        log.info("wait..end");
-                    }
-                }
-            } finally {
-                this.observers.forEach(i -> i.updateClose(this.all, this.ok, this.error));
-            }
-
-
-        }
-
-        private void shutdownNow(ScheduledExecutorService i) {
-            try {
-                if (!i.awaitTermination(closeTimeout, TimeUnit.SECONDS)) {
-                    log.info("shutdown not all done");
-                    this.handleException(this.master::shutdownNow);
-                    this.handleException(this.slave::shutdownNow);
-                    log.info("shutdownNow awaitTermination:{}", i.awaitTermination(shutdownTimeout, TimeUnit.SECONDS));
-                }
+                service.awaitTermination(Integer.MAX_VALUE, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                //忽略
             }
+            workers.forEach(i -> log.info("name:{} status:{}", i.name, i.workerStatus));
         }
 
 
-        private void handleException(Runnable runnable) {
-            try {
-                runnable.run();
-            } catch (Exception e) {
-                log.error("e", e);
-            }
-        }
-
-        private void addSlave() {
-            for (int i = 0; i < slaveSize; i++) {
-                this.slave.execute(this::execute);
-            }
-        }
+//
 
 
         /**
          * 加入核心工人數
          */
-        private void addCoreWork() {
-            for (int i = 0; i < coreSize; i++) {
-                this.master.execute(this::execute);
-            }
-
-        }
-
-
-        private void execute() {
-            T data = null;
-            while (!queue.isEmpty() && !Thread.currentThread().isInterrupted() && isRunning.get()) {
-                try {
-                    data = queue.take();
-                    this.handle(data);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    if (data != null) {
-                        queue.remove(data);
-                    }
-                }
-            }
-            this.observers.forEach(i -> i.updateRecycle(Thread.currentThread()));
-        }
-
-
-        /**
-         * 設定奴隸啟動秒數
-         */
-        private void setSlaveStartSec() {
-            this.slave.schedule(this::startSlave, slaveStartSec, TimeUnit.SECONDS);
-        }
-
-        /**
-         * 時間到啟動服務
-         */
-        private void startSlave() {
-            addSlave();
-            observers.forEach(TaskMasterSlaveObserver::updateOpenSlave);
-        }
-
-        public void handle(T t) {
-            Stopwatch stopwatch = Stopwatch.createStarted();
-            try {
-                log.trace("start src {} handle done", t);
-                task.handle(t);
-                ok.add(t);
-            } catch (Exception e) {
-                error.add(t);
-                this.observers.forEach(i -> i.updateError(t, e));
-            } finally {
-                stopwatch.stop();
-                log.trace("finally src {} handle done spent:{}ms ", t, stopwatch.elapsed(TimeUnit.MILLISECONDS));
-                taskLatch.countDown();
+        private void addWork() {
+            for (int i = 0; i < coreSize + slaveSize; i++) {
+                final Worker<T> worker = new Worker<>(queue, task, latch, observers);
+                workers.add(worker);
+                completionService.submit(worker, "");
             }
         }
-
-        private List<ScheduledExecutorService> getScheduledExecutorService() {
-            List<ScheduledExecutorService> scheduledExecutorServices = new ArrayList<>();
-            if (master != null) {
-                scheduledExecutorServices.add(master);
-            }
-            if (slave != null) {
-                scheduledExecutorServices.add(slave);
-            }
-            return scheduledExecutorServices;
-
-
-        }
-
-
     }
 
 
@@ -369,5 +250,81 @@ public class TaskMasterSlaveService {
     @FunctionalInterface
     public interface TaskHandle<T> {
         void handle(T data);
+    }
+
+    enum WorkerStatus {
+        WAIT_START,//待開始
+        RUNNING,//處理中
+        WAIT_QUEUED,//待
+
+        RECYCLE,//已回收
+    }
+
+    class Worker<T extends IBlockKey> implements Runnable {
+        private WorkerStatus workerStatus = WorkerStatus.WAIT_START;
+
+        private final OrderQueue<T> queue;
+
+        private final TaskHandle<T> task;//任務處理
+
+        private final CountDownLatch latch;
+
+        private final List<TaskMasterSlaveObserver<T>> observers;
+
+        @Getter
+        private String name;
+
+
+        public Worker(OrderQueue<T> queue, TaskHandle<T> task, CountDownLatch latch, List<TaskMasterSlaveObserver<T>> observers) {
+            this.queue = queue;
+            this.task = task;
+            this.latch = latch;
+            this.observers = observers;
+        }
+
+        @Override
+        public void run() {
+            try {
+                log.info("Thread name:{} worker:{}", Thread.currentThread().getName(), isRunning.get());
+                this.name = Thread.currentThread().getName();
+
+                workerStatus = WorkerStatus.WAIT_START;
+                T data = null;
+                while (isRunning.get()) {
+                    workerStatus = WorkerStatus.WAIT_QUEUED;
+                    try {
+                        data = queue.take();
+                        workerStatus = WorkerStatus.RUNNING;
+                        this.handle(data);
+                    } catch (InterruptedException e) {
+                        log.info("{} Interrupted:" + Thread.currentThread().getName(), isRunning.get());
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        log.info("Thread {}",Thread.currentThread().getName()+" countDown");
+                        latch.countDown();
+                        if (data != null) {
+                            queue.remove(data);
+                        }
+                    }
+                }
+
+            } finally {
+                log.info("recycling...:" + Thread.currentThread().getName());
+                this.observers.forEach(i -> i.updateRecycle(Thread.currentThread()));
+                workerStatus = WorkerStatus.RECYCLE;
+            }
+        }
+
+        public void handle(T t) {
+            Stopwatch stopwatch = Stopwatch.createStarted();
+            try {
+                task.handle(t);
+            } catch (Exception e) {
+                throw new ConcurrentException("error key:" + t.toKey(), e);
+            } finally {
+                stopwatch.stop();
+                log.trace("finally src {} handle done spent:{}ms ", t, stopwatch.elapsed(TimeUnit.MILLISECONDS));
+            }
+        }
     }
 }

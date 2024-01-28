@@ -21,7 +21,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 @Slf4j
-class TaskMasterSlaveServiceTest {
+public class TaskMasterSlaveServiceTest {
 
 
     /**
@@ -112,7 +112,7 @@ class TaskMasterSlaveServiceTest {
         Thread thread = new Thread(() -> {
             TaskMasterSlaveService service = new TaskMasterSlaveService(2,
                     1, //
-                    3, closeTimeout, "master", "slave", -1);
+                    3, "master");
 
             TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client = service.getClient(task, collect);
 
@@ -321,7 +321,7 @@ class TaskMasterSlaveServiceTest {
     }
 
 
-   static class SpyTask implements TaskMasterSlaveService.TaskHandle<BlockItem> {
+    static class SpyTask implements TaskMasterSlaveService.TaskHandle<BlockItem> {
 
         private final int errorSize;
 
@@ -352,8 +352,6 @@ class TaskMasterSlaveServiceTest {
                 throw new RuntimeException(e);
             } finally {
                 log.info(" end execute workTime:{}", value);
-
-
             }
 
         }
@@ -363,7 +361,7 @@ class TaskMasterSlaveServiceTest {
 
 
     @Getter
-    static class BlockItem implements IBlockKey {
+    public static class BlockItem implements IBlockKey {
 
         private final Long value;
 
