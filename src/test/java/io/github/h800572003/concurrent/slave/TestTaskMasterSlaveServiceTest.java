@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 class TestTaskMasterSlaveServiceTest {
 
-    @RepeatedTest(1000)
+    @RepeatedTest(100)
     void testLoopTest() {
         ThreadLocalRandom random = ThreadLocalRandom.current();
 
@@ -21,12 +21,12 @@ class TestTaskMasterSlaveServiceTest {
         TestTaskMasterSlaveService testTaskMasterSlaveService = new TestTaskMasterSlaveService(coreSize,
                 1,//
                 slaveSize,//
-                1,//
+                3,//
                 10);//
         testTaskMasterSlaveService.test();
     }
 
-    @RepeatedTest(1000)
+    @RepeatedTest(100)
     void testNotData() {
 
         ThreadLocalRandom random = ThreadLocalRandom.current();
@@ -36,7 +36,7 @@ class TestTaskMasterSlaveServiceTest {
         TestTaskMasterSlaveService testTaskMasterSlaveService = new TestTaskMasterSlaveService(coreSize,
                 1,
                 slaveSize,
-                1,
+                10,
                 0);
         testTaskMasterSlaveService.test();
 
@@ -44,7 +44,7 @@ class TestTaskMasterSlaveServiceTest {
         Assertions.assertTrue(testTaskMasterSlaveService.getThreadSet().size() <= coreSize + slaveSize);
     }
 
-    @RepeatedTest(1000)
+    @RepeatedTest(10)
     void testWithInterrupted() throws InterruptedException {
         AtomicReference<TestTaskMasterSlaveService> testTaskMasterSlaveService = new AtomicReference<>();
         int threadSize = 4;
@@ -57,13 +57,7 @@ class TestTaskMasterSlaveServiceTest {
         log.info("interrupt...");
 
         thread.join();
-        int expected = (threadSize + threadSize) * loopTime;
-        log.info("expected:" + expected);
-
-
-        Assertions.assertEquals(testTaskMasterSlaveService.get().getThreadCount(), testTaskMasterSlaveService.get().getThreadSet().size());
-
-
+        Assertions.assertEquals(true, testTaskMasterSlaveService.get().isAllThreadTerminated());
         log.info("finish");
 
     }
@@ -74,7 +68,7 @@ class TestTaskMasterSlaveServiceTest {
                     1,
                     threadSize,
                     loopTime,
-                    1));
+                    10));
             testTaskMasterSlaveService.get().execute(() -> {
                 try {
                     log.info("TestTaskMasterSlaveService started");

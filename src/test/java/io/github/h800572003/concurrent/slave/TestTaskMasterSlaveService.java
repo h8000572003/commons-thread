@@ -5,11 +5,12 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.junit.jupiter.api.Assertions;
 
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,8 +36,10 @@ class TestTaskMasterSlaveService {
     private boolean withLoopingTimeAssert = true;
 
 
+    private boolean withShutdownAssert = false;
+
     @Getter
-    private ConcurrentLinkedQueue<TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem>> clients = new ConcurrentLinkedQueue<>();
+    private List<TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem>> clients = new CopyOnWriteArrayList<>();
 
 
     public TestTaskMasterSlaveService(int coreSize, long slaveStartSec, int slaveSize, int loopTime, int timeEachLoop) {
@@ -98,22 +101,28 @@ class TestTaskMasterSlaveService {
             Assertions.assertEquals(loopTime * timeEachLoop, times.get());
         }
 
+        if (withShutdownAssert) {
+            Assertions.assertEquals(true, this.isAllThreadTerminated());
+        }
+    }
+
+    public boolean isAllThreadTerminated() {
+        EqualsBuilder equalsBuilder = new EqualsBuilder();
+        for (TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client : clients) {
+            equalsBuilder.append(true, client.isTerminated());
+            equalsBuilder.append(true, client.isShutdown());
+        }
+        return equalsBuilder.isEquals();
     }
 
     public int getThreadCount() {
         int sum = 0;
-        while (true) {
-            TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> poll = clients.poll();
-            if (poll == null) {
-                break;
-            }
-            List<TaskMasterSlaveService.Worker<BlockItem>> workers = poll.getWorkers();
-
+        for (TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client : clients) {
+            List<TaskMasterSlaveService.Worker<BlockItem>> workers = client.getWorkers();
             for (TaskMasterSlaveService.Worker<BlockItem> worker : workers) {
                 if (StringUtils.isNotBlank(worker.getName())) {
                     sum++;
                 }
-
             }
         }
         return sum;

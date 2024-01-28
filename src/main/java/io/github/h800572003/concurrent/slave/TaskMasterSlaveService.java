@@ -29,9 +29,6 @@ public class TaskMasterSlaveService {
     private final String masterPrefix;
 
 
-
-
-
     private final AtomicBoolean isRunning = new AtomicBoolean(true);
 
     /**
@@ -181,15 +178,25 @@ public class TaskMasterSlaveService {
 
         public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task, OrderQueue<T> queue) {
             this.data = data;
-            this.service = new ScheduledThreadPoolExecutor(coreSize + slaveSize, new CustomizableThreadFactory(masterPrefix));
+            int corePoolSize = Math.min(coreSize + slaveSize, Math.max(data.size(), 1));
+            this.service = new ScheduledThreadPoolExecutor(corePoolSize, new CustomizableThreadFactory(masterPrefix));
             this.completionService = new ExecutorCompletionService<>(this.service);
             this.queue = queue;
             this.task = task;
             data.forEach(queue::add);
             this.latch = new CountDownLatch(data.size());
-            this.addWork();
+            if (!CollectionUtils.isEmpty(data)) {
+                this.addWork();
+            }
+
         }
 
+        public boolean isTerminated() {
+            return service.isTerminated();
+        }
+        public boolean isShutdown() {
+            return service.isShutdown();
+        }
 
         public void addRegister(TaskMasterSlaveObserver<T> observer) {
             this.observers.add(observer);
@@ -205,22 +212,21 @@ public class TaskMasterSlaveService {
                 latch.await();
                 log.info("awaiting done");
             } catch (InterruptedException e) {
-                log.info("Interrupted");
-                isRunning.set(false);
+                Thread.currentThread().interrupt();
             } finally {
                 log.info("finally");
                 isRunning.set(false);
                 service.shutdownNow();
-                awiat();
+                waitForJob();
             }
         }
 
-        private void awiat() {
-            log.info("call shutdown");
+        private void waitForJob() {
             try {
                 service.awaitTermination(Integer.MAX_VALUE, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 //忽略
+
             }
             workers.forEach(i -> log.info("name:{} status:{}", i.name, i.workerStatus));
         }
@@ -300,7 +306,6 @@ public class TaskMasterSlaveService {
                         log.info("{} Interrupted:" + Thread.currentThread().getName(), isRunning.get());
                         Thread.currentThread().interrupt();
                     } finally {
-                        log.info("Thread {}",Thread.currentThread().getName()+" countDown");
                         latch.countDown();
                         if (data != null) {
                             queue.remove(data);
