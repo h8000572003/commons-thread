@@ -14,6 +14,8 @@
 - 0.0.4  加入關閉timeout機制
 - 0.0.5  奴隸不主動加入，時間到在加入
 - 0.0.6  加入加入根據順序且同樣key資料不得同時執行
+- 0.0.7  加入主奴隸設計(TaskMasterSlaveService)
+- 0.0.7.1 修補主奴隸制度(fix leak threads)
 
 ```mermaid
 classDiagram
