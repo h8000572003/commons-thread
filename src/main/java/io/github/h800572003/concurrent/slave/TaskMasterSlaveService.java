@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 任務主奴隸服務
@@ -70,9 +71,7 @@ public class TaskMasterSlaveService {
         if (this.slaveSize <= 0) {
             throw new ConcurrentException("work size more than 0");
         }
-        if (this.slaveStartSec <= 0) {
-            throw new ConcurrentException("timeout size more than 0");
-        }
+
     }
 
     public <T extends IBlockKey> TaskMasterSlaveClient<T> getClient(TaskHandle<T> task, List<T> data) {
@@ -120,32 +119,12 @@ public class TaskMasterSlaveService {
      */
     public interface TaskMasterSlaveObserver<T> {
 
-        /**
-         * 通知啟動通知
-         */
-        default void updateOpenSlave() {
-
-        }
 
         /**
-         * 通知
+         * 回收
          *
-         * @param total
-         * @param ok
-         * @param error
+         * @param currentTread 回收執行緒
          */
-        default void updateClose(List<T> total, List<T> ok, List<T> error) {
-
-        }
-
-        default void updateInterrupted() {
-
-        }
-
-        default void updateError(T data, Throwable throwable) {
-
-        }
-
         default void updateRecycle(Thread currentTread) {
 
         }
@@ -159,8 +138,6 @@ public class TaskMasterSlaveService {
      */
     public class TaskMasterSlaveClient<T extends IBlockKey> {
         final ScheduledExecutorService service;//主要任務
-        private final List<T> ok = new CopyOnWriteArrayList<>();
-        private final List<T> error = new CopyOnWriteArrayList<>();
 
         private final OrderQueue<T> queue;
 
@@ -173,11 +150,9 @@ public class TaskMasterSlaveService {
 
         @Getter
         private final List<Worker<T>> workers = new CopyOnWriteArrayList<>();
-        private final List<T> data;
 
 
         public TaskMasterSlaveClient(List<T> data, TaskHandle<T> task, OrderQueue<T> queue) {
-            this.data = data;
             int corePoolSize = Math.min(coreSize + slaveSize, Math.max(data.size(), 1));
             this.service = new ScheduledThreadPoolExecutor(corePoolSize, new CustomizableThreadFactory(masterPrefix));
             this.completionService = new ExecutorCompletionService<>(this.service);
@@ -194,6 +169,7 @@ public class TaskMasterSlaveService {
         public boolean isTerminated() {
             return service.isTerminated();
         }
+
         public boolean isShutdown() {
             return service.isShutdown();
         }
@@ -208,14 +184,12 @@ public class TaskMasterSlaveService {
          */
         public void run() {
             try {
-                log.info("awaiting start");
                 latch.await();
-                log.info("awaiting done");
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                log.info("Interrupted");
             } finally {
-                log.info("finally");
                 isRunning.set(false);
+
                 service.shutdownNow();
                 waitForJob();
             }
@@ -228,7 +202,7 @@ public class TaskMasterSlaveService {
                 //忽略
 
             }
-            workers.forEach(i -> log.info("name:{} status:{}", i.name, i.workerStatus));
+            workers.forEach(i -> log.info("name:{} status:{}", i.name, i.status));
         }
 
 
@@ -239,8 +213,13 @@ public class TaskMasterSlaveService {
          * 加入核心工人數
          */
         private void addWork() {
-            for (int i = 0; i < coreSize + slaveSize; i++) {
+            for (int i = 0; i < coreSize; i++) {
                 final Worker<T> worker = new Worker<>(queue, task, latch, observers);
+                workers.add(worker);
+                completionService.submit(worker, "");
+            }
+            for (int i = 0; i < slaveSize; i++) {
+                final WorkerSlave<T> worker = new WorkerSlave<>(queue, task, latch, observers);
                 workers.add(worker);
                 completionService.submit(worker, "");
             }
@@ -264,11 +243,32 @@ public class TaskMasterSlaveService {
         WAIT_QUEUED,//待
 
         RECYCLE,//已回收
+
+        NONE,//未
+    }
+
+
+    class WorkerSlave<T extends IBlockKey> extends Worker<T> {
+
+        public WorkerSlave(OrderQueue<T> queue, TaskHandle<T> task, CountDownLatch latch, List<TaskMasterSlaveObserver<T>> taskMasterSlaveObservers) {
+            super(queue, task, latch, taskMasterSlaveObservers);
+        }
+
+        @Override
+        public void run() {
+            try {
+                TimeUnit.SECONDS.sleep(slaveStartSec);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }finally {
+                super.run();
+            }
+
+        }
     }
 
     class Worker<T extends IBlockKey> implements Runnable {
-        private WorkerStatus workerStatus = WorkerStatus.WAIT_START;
-
+        private final AtomicReference<WorkerStatus> status = new AtomicReference<>();
         private final OrderQueue<T> queue;
 
         private final TaskHandle<T> task;//任務處理
@@ -277,30 +277,33 @@ public class TaskMasterSlaveService {
 
         private final List<TaskMasterSlaveObserver<T>> observers;
 
+
         @Getter
         private String name;
 
+        private Thread thread;
 
         public Worker(OrderQueue<T> queue, TaskHandle<T> task, CountDownLatch latch, List<TaskMasterSlaveObserver<T>> observers) {
             this.queue = queue;
             this.task = task;
             this.latch = latch;
             this.observers = observers;
+            this.status.set(WorkerStatus.NONE);
         }
+
 
         @Override
         public void run() {
             try {
-                log.info("Thread name:{} worker:{}", Thread.currentThread().getName(), isRunning.get());
+                this.thread = Thread.currentThread();
                 this.name = Thread.currentThread().getName();
-
-                workerStatus = WorkerStatus.WAIT_START;
+                status.set(WorkerStatus.WAIT_START);
                 T data = null;
                 while (isRunning.get()) {
-                    workerStatus = WorkerStatus.WAIT_QUEUED;
+                    status.set(WorkerStatus.WAIT_QUEUED);
                     try {
                         data = queue.take();
-                        workerStatus = WorkerStatus.RUNNING;
+                        status.set(WorkerStatus.RUNNING);
                         this.handle(data);
                     } catch (InterruptedException e) {
                         log.info("{} Interrupted:" + Thread.currentThread().getName(), isRunning.get());
@@ -314,9 +317,8 @@ public class TaskMasterSlaveService {
                 }
 
             } finally {
-                log.info("recycling...:" + Thread.currentThread().getName());
                 this.observers.forEach(i -> i.updateRecycle(Thread.currentThread()));
-                workerStatus = WorkerStatus.RECYCLE;
+                status.set(WorkerStatus.RECYCLE);
             }
         }
 

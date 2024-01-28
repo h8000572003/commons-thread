@@ -36,7 +36,19 @@ class TestTaskMasterSlaveService {
     private boolean withLoopingTimeAssert = true;
 
 
-    private boolean withShutdownAssert = false;
+    private boolean withShutdownAssert = true;
+
+    private boolean withCounterAssert = true;
+
+    @Getter
+    private final AtomicInteger startCounter = new AtomicInteger(0);
+
+    @Getter
+    private final AtomicInteger okCounter = new AtomicInteger(0);
+
+    @Getter
+    private final AtomicInteger errorCounter = new AtomicInteger(0);
+
 
     @Getter
     private List<TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem>> clients = new CopyOnWriteArrayList<>();
@@ -74,8 +86,13 @@ class TestTaskMasterSlaveService {
             TaskMasterSlaveService.TaskMasterSlaveClient<BlockItem> client = this.service.getClient(data -> {
 
                 try {
+                    startCounter.incrementAndGet();
                     log.info("start thread name:{} index:{} value:{}", Thread.currentThread().getName(), data.value, data.key);
                     runnable.run();
+                    okCounter.incrementAndGet();
+                } catch (Exception e) {
+                    errorCounter.incrementAndGet();
+                    throw new RuntimeException(e);
                 } finally {
                     times.incrementAndGet();
                     log.info("end thread name:{} index:{} value:{}", Thread.currentThread().getName(), data.value, data.key);
@@ -102,7 +119,12 @@ class TestTaskMasterSlaveService {
         }
 
         if (withShutdownAssert) {
-            Assertions.assertEquals(true, this.isAllThreadTerminated());
+            Assertions.assertTrue(this.isAllThreadTerminated());
+        }
+        if (withCounterAssert) {
+            Assertions.assertEquals(loopTime * timeEachLoop, startCounter.get());
+            Assertions.assertEquals(0, errorCounter.get());
+            Assertions.assertEquals(loopTime * timeEachLoop, okCounter.get());
         }
     }
 
